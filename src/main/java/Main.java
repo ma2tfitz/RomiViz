@@ -28,7 +28,10 @@ import edu.wpi.first.vision.VisionThread;
 import org.opencv.core.Mat;
 import org.opencv.core.Core;
 import org.opencv.core.Point;
+import org.opencv.core.MatOfPoint;
+import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
+import org.opencv.core.Size;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
@@ -289,14 +292,80 @@ public final class Main {
    */
   public static class MyPipeline implements VisionPipeline {
     public int val;
-      public Mat output_image;
+    public double tx, ty, ta;
+    public Mat output_image;
+    public Mat work_image;
+
+    // old wiffle ball
+    //static void Scalar threshold_low = new Scalar(18, 70, 30);
+    //static void Scalar threshold_high = new Scalar(40, 255, 255);
+
+    // wiffle
+    //static Scalar threshold_low = new Scalar(30, 20, 80);
+    //static Scalar threshold_high = new Scalar(50, 255, 255);
+    static Scalar threshold_low = new Scalar(30, 80, 80);
+    static Scalar threshold_high = new Scalar(55, 255, 255);
+
+    static Scalar color_red = new Scalar(0, 0, 255);
+    static Size blur_kernel =  new Size(13, 13);
 
     @Override
     public void process(Mat mat) {
 	output_image = mat.clone();
-	Imgproc.putText(output_image, Integer.toString(val), new Point(80, 100), Core.FONT_HERSHEY_SIMPLEX, 1.0,
-			new Scalar(0, 0, 255), 1, Imgproc.LINE_AA, false);
-	val += 1;
+	work_image = new Mat(mat.rows(), mat.cols(), mat.type());
+	Imgproc.GaussianBlur(mat, work_image, blur_kernel, 0);
+	Imgproc.cvtColor(work_image, work_image, Imgproc.COLOR_BGR2HSV);
+	Core.inRange(work_image, threshold_low, threshold_high, work_image);
+
+        List<MatOfPoint> contours = new ArrayList<>();
+	Mat hierarchy = new Mat();
+	Imgproc.findContours(work_image, contours, hierarchy, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_SIMPLE);
+	val = 0;
+	double max_area = 0.0;
+	int max_x = 0;
+	int max_y = 0;
+	int max_w = 0;
+	int max_h = 0;
+	
+	for (int i = 0; i < contours.size(); i++) {
+	    Rect rect = Imgproc.boundingRect(contours.get(i));
+	    if (rect.area() < 60) {
+		continue;
+	    }
+	    int w = rect.width;
+	    int h = rect.height;
+	    float aspect = w / h;
+	    if (aspect < 0.9 || aspect > 1.1) {
+		continue;
+	    }
+	    if (rect.area() > max_area) {
+		max_x = rect.x;
+		max_y = rect.y;
+		max_w = w;
+		max_h = h;
+		max_area = rect.area();
+	    }
+	    // area = Imgproc.contourArea(m);
+	    // solidity = area / (width * height);
+
+	    // centerX = x + width / 2;
+	    // centerY = y + height / 2;                    
+	    
+	    // Imgproc.drawContours(output_image, contours, i, color_red, 2, Core.LINE_8, hierarchy, 0, new Point());
+	    //Imgproc.rectangle(output_image, new Point(x, y), new Point(x+w, y+h), color_red, 2);
+	    val += 1;
+	}
+	if (max_area > 0) {
+	    tx = (max_x + max_w / 2) - mat.cols() / 2;
+	    ty = (max_y + max_h / 2) - mat.rows() / 2;
+	    ta = max_area;
+	    //tw = max_w;
+	    //th = max_h;
+	    Imgproc.rectangle(output_image, new Point(max_x, max_y), new Point(max_x+max_w, max_y+max_h), color_red, 2);
+	}
+	//Imgproc.putText(output_image, Integer.toString(val), new Point(80, 100), Core.FONT_HERSHEY_SIMPLEX, 1.0,
+	//		new Scalar(0, 255, 255), 1, Imgproc.LINE_AA, false);
+	//val += 1;
     }
   }
 
@@ -340,6 +409,9 @@ public final class Main {
 	VisionThread visionThread = new VisionThread(cameras.get(0),
               new MyPipeline(), pipeline -> {
 		 ntinst.getTable("datatable").getEntry("val").setNumber(pipeline.val);
+		 ntinst.getTable("datatable").getEntry("tx").setNumber(pipeline.tx);
+		 ntinst.getTable("datatable").getEntry("ty").setNumber(pipeline.ty);
+		 ntinst.getTable("datatable").getEntry("ta").setNumber(pipeline.ta);
 		 output_stream.putFrame(pipeline.output_image);
         // do something with pipeline results
       });
